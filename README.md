@@ -5,4 +5,6 @@
 背景音乐以及AI解签尚未实现；
 目前界面仅是简单的图形组合，字体也不够清晰；
 总而言之，这个项目十分简陋。
+# 示例图
 <img width="794" height="629" alt="image" src="https://github.com/user-attachments/assets/09f38638-6931-40d4-b6d3-5e508e2e07af" />
+<img width="783" height="619" alt="image" src="https://github.com/user-attachments/assets/a890ae14-2d47-48cf-8062-288d771e1b60" />
