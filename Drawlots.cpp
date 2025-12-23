@@ -136,7 +136,7 @@ Color GradientColor(Color start, Color end, float y, float yStart, float yEnd) {
 }
 
 // 实现：改用 contentIndex 来选择 contents 和 level，id 仍用于全局编号显示
-// 关键修改：签等级直接对应contents的索引（contents已按吉→凶排序）
+// 关键修改：签等级直接对应contents的索引（contents按吉→凶排序）
 LotteryStick CreateLotteryStick(const std::vector<std::string>& contents, int id, int contentIndex, LotteryType type, const std::string& positiveAdvice, const std::string& negativeAdvice) {
     LotteryStick stick;
     stick.id = std::to_string(id);
@@ -148,7 +148,7 @@ LotteryStick CreateLotteryStick(const std::vector<std::string>& contents, int id
 
     stick.content = contents[idx] + u8"（第" + stick.id + u8"签）";
 
-    // 核心修复：等级直接等于idx（contents已按LEVEL_BEST→LEVEL_WORST排序）
+    // 核心修复：等级直接等于idx（contents按LEVEL_BEST→LEVEL_WORST排序）
     stick.level = (StickLevel)idx;
 
     stick.type = type;
@@ -395,11 +395,12 @@ void DrawLottery() {
     // 标记当前类型为今日已抽
     hasDrawnTodayByType[selectedType] = true;
 
-    // 保存记录到文件（移除AI解签字段）
+    // 保存记录到文件（新增签等级字段）
     std::ofstream recordFile("lottery_records.txt", std::ios::app);
     if (recordFile.is_open()) {
+        // 新增level字段（用数字存储，方便加载解析）
         recordFile << todayDate << "|" << currentStick.id << "|" << currentStick.content << "|"
-            << currentStick.annotation << std::endl;
+            << (int)currentStick.level << "|" << currentStick.annotation << std::endl;
         recordFile.close();
     }
     else {
@@ -410,7 +411,7 @@ void DrawLottery() {
     gAnnotScroll = 0.0f;
 }
 
-// 加载抽签记录（移除AI解签字段）
+// 加载抽签记录（修复旧记录的等级解析）
 void LoadRecords() {
     std::ifstream recordFile("lottery_records.txt");
     if (!recordFile.is_open()) {
@@ -421,33 +422,70 @@ void LoadRecords() {
     std::string line;
     while (std::getline(recordFile, line)) {
         std::stringstream ss(line);
-        std::string date, id, content, annotation;
+        std::string date, id, content, levelStr, annotation;
+        bool isNewFormat = false;
+        // 先尝试解析新格式（含level字段）
         if (std::getline(ss, date, '|') && std::getline(ss, id, '|') && std::getline(ss, content, '|') &&
-            std::getline(ss, annotation))
+            std::getline(ss, levelStr, '|') && std::getline(ss, annotation))
         {
-            LotteryStick stick;
-            stick.id = id;
-            stick.content = content;
-            stick.annotation = annotation;
-
-            // 从content或id反向推导type（确保记录加载后类型正确）
-            // 简化处理：按签的编号范围推导类型
-            int stickId = std::stoi(id);
-            if (stickId >= 1 && stickId <= 18) stick.type = TYPE_WEALTH;
-            else if (stickId >= 19 && stickId <= 36) stick.type = TYPE_LOVE;
-            else if (stickId >= 37 && stickId <= 54) stick.type = TYPE_CAREER;
-            else if (stickId >= 55 && stickId <= 72) stick.type = TYPE_HEALTH;
-            else stick.type = TYPE_RANDOM;
-
-            LotteryRecord record;
-            record.date = date;
-            record.stick = stick;
-            recordList.push_back(record);
+            isNewFormat = true;
         }
         else {
-            std::string msg = std::string("文件 lottery_records.txt 中的行格式错误: ") + line;
-            TraceLog(LOG_WARNING, "%s", msg.c_str());
+            // 新格式解析失败，尝试旧格式（无level字段）
+            ss.clear();
+            ss.str(line);
+            if (!std::getline(ss, date, '|') || !std::getline(ss, id, '|') || !std::getline(ss, content, '|') || !std::getline(ss, annotation)) {
+                std::string msg = std::string("文件 lottery_records.txt 中的行格式错误: ") + line;
+                TraceLog(LOG_WARNING, "%s", msg.c_str());
+                continue;
+            }
         }
+
+        LotteryStick stick;
+        stick.id = id;
+        stick.content = content;
+        stick.annotation = annotation;
+
+        // 解析签等级
+        if (isNewFormat) {
+            // 新格式：直接读取level字段
+            try {
+                int level = std::stoi(levelStr);
+                stick.level = (StickLevel)level;
+            }
+            catch (...) {
+                stick.level = LEVEL_MID;
+            }
+        }
+        else {
+            // 旧格式：根据签号推导等级（核心修复）
+            int stickId = std::stoi(id);
+            // 每个类型的签等级是按6个等级循环的（对应LEVEL_BEST到LEVEL_WORST）
+            int typeStartId = 0;
+            if (stickId >= 1 && stickId <= 18) typeStartId = 1;      // 求财
+            else if (stickId >= 19 && stickId <= 36) typeStartId = 19; // 求姻缘
+            else if (stickId >= 37 && stickId <= 54) typeStartId = 37; // 求事业
+            else if (stickId >= 55 && stickId <= 72) typeStartId = 55; // 求健康
+            else typeStartId = 73; // 随机签
+
+            // 计算该签在类型内的索引（1-based），再取模6得到等级
+            int idxInType = (stickId - typeStartId + 1) % 6;
+            if (idxInType == 0) idxInType = 6;
+            stick.level = (StickLevel)(idxInType - 1); // 对应LEVEL_BEST到LEVEL_WORST
+        }
+
+        // 推导签类型
+        int stickId = std::stoi(id);
+        if (stickId >= 1 && stickId <= 18) stick.type = TYPE_WEALTH;
+        else if (stickId >= 19 && stickId <= 36) stick.type = TYPE_LOVE;
+        else if (stickId >= 37 && stickId <= 54) stick.type = TYPE_CAREER;
+        else if (stickId >= 55 && stickId <= 72) stick.type = TYPE_HEALTH;
+        else stick.type = TYPE_RANDOM;
+
+        LotteryRecord record;
+        record.date = date;
+        record.stick = stick;
+        recordList.push_back(record);
     }
     recordFile.close();
 }
@@ -588,7 +626,8 @@ std::vector<std::string> WrapTextToLines(Font font, const std::string& text, flo
     return lines;
 }
 
-// ---------- 重写 DrawUI：适配按类型抽签的状态显示 ----------
+
+// ---------- 重写 DrawUI：适配按类型抽签的状态显示 + 修复记录面板重复定义 ----------
 void DrawUI() {
     // 背景
     DrawTexture(texBg, 0, 0, WHITE);
@@ -817,19 +856,92 @@ void DrawUI() {
         }
     }
 
-    // 抽签历史面板（美化）
+ 
+    // ========== 唯一的抽签历史面板（最终版：显示签等级+修复滚轮方向） ==========
     if (showRecord) {
         Rectangle recordPanel = { 20.0f, 220.0f, (float)SCREEN_WIDTH - 40.0f, (float)SCREEN_HEIGHT - 240.0f };
+        // 调整面板位置：如果显示了解签区，面板向下偏移，避免重叠
+        if (showAnnotation && hasDrawnTodayByType[selectedType]) {
+            recordPanel.y = 420.0f;
+            recordPanel.height = (float)SCREEN_HEIGHT - 440.0f;
+        }
+
         DrawRectangleRounded({ recordPanel.x + 4, recordPanel.y + 4, recordPanel.width, recordPanel.height }, 0.04f, 8, Fade(BLACK, 0.08f));
         DrawRectangleRounded(recordPanel, 0.04f, 8, WHITE);
         DrawRectangleRoundedLines(recordPanel, 0.04f, 8, Fade(BLACK, 0.18f));
         DrawTextEx(gFont, u8"抽签记录", Vector2{ recordPanel.x + 12.0f, recordPanel.y + 10.0f }, 24.0f, 1.0f, BLACK);
 
-        float yOffset = recordPanel.y + 48.0f;
-        for (int i = (int)recordList.size() - 1; i >= 0 && yOffset < recordPanel.y + recordPanel.height - 12.0f; --i) {
-            std::string recordText = recordList[i].date + "：" + recordList[i].stick.content;
-            DrawTextEx(gFont, recordText.c_str(), Vector2{ recordPanel.x + 12.0f, yOffset }, 18.0f, 1.0f, BLACK);
-            yOffset += 28.0f;
+        // 核心参数定义（清晰化）
+        static float recordScroll = 0.0f;       // 滚动偏移量（正数=向下滚，显示更早记录）
+        const float lineHeight = 28.0f;         // 每条记录高度
+        int totalRecords = (int)recordList.size();
+        float totalContentHeight = totalRecords * lineHeight; // 所有记录总高度
+        float panelInnerTop = recordPanel.y + 48.0f;          // 面板内顶部（标题下方）
+        float panelInnerBottom = recordPanel.y + recordPanel.height - 10.0f; // 面板内底部
+        float panelInnerHeight = panelInnerBottom - panelInnerTop; // 面板可显示高度
+
+        // 1. 滚轮控制滚动（修复方向：向下滚=看最新记录，向上滚=看更早记录）
+        if (CheckCollisionPointRec(GetMousePosition(), recordPanel)) {
+            float wheelDelta = GetMouseWheelMove(); // 滚轮向上=1，向下=-1
+            // 核心修改：将 "+=" 改为 "-="，反转滚动方向
+            recordScroll -= wheelDelta * lineHeight;
+
+            // 限制滚动范围：不能滚出内容边界
+            float maxScroll = fmaxf(0.0f, totalContentHeight - panelInnerHeight);
+            recordScroll = Clamp(recordScroll, 0.0f, maxScroll);
+        }
+
+        // 2. 裁剪区域：只渲染面板内的内容（提升性能）
+        BeginScissorMode((int)recordPanel.x, (int)panelInnerTop, (int)recordPanel.width, (int)panelInnerHeight);
+
+        // 3. 绘制所有记录（倒序：最新→最旧，滚动偏移适配+显示签等级）
+        float drawY = panelInnerTop - recordScroll; // 初始绘制位置（滚动偏移直接作用）
+        for (int i = totalRecords - 1; i >= 0; --i) {
+            // 仅绘制在面板可见范围内的记录（包含部分显示的记录）
+            if (drawY + lineHeight > panelInnerTop && drawY < panelInnerBottom) {
+                // 获取签等级文本
+                std::string levelText;
+                switch (recordList[i].stick.level) {
+                case LEVEL_BEST: levelText = u8"上上签"; break;
+                case LEVEL_GOOD: levelText = u8"上签"; break;
+                case LEVEL_MID_GOOD: levelText = u8"中吉签"; break;
+                case LEVEL_MID: levelText = u8"中平签"; break;
+                case LEVEL_BAD: levelText = u8"下签"; break;
+                case LEVEL_WORST: levelText = u8"下下签"; break;
+                default: levelText = u8"未知签级"; break;
+                }
+                // 拼接包含等级的记录文本
+                std::string recordText = recordList[i].date + "：" + recordList[i].stick.content + "（" + levelText + "）";
+                DrawTextEx(gFont, recordText.c_str(), Vector2{ recordPanel.x + 12.0f, drawY }, 18.0f, 1.0f, BLACK);
+            }
+            drawY += lineHeight; // 下一条记录向下偏移
+        }
+
+        EndScissorMode();
+
+        // 4. 绘制滚动条（精准映射滚动位置）
+        if (totalContentHeight > panelInnerHeight) {
+            const float scrollBarWidth = 6.0f;
+            const float scrollBarMargin = 8.0f;
+            // 滚动条背景
+            Rectangle scrollBarBg = {
+                recordPanel.x + recordPanel.width - scrollBarWidth - scrollBarMargin,
+                panelInnerTop + scrollBarMargin,
+                scrollBarWidth,
+                panelInnerHeight - 2 * scrollBarMargin
+            };
+            DrawRectangleRounded(scrollBarBg, 0.5f, 4, Fade(LIGHTGRAY, 0.7f));
+
+            // 滚动条滑块（高度按内容占比计算，位置按滚动偏移计算）
+            float sliderHeight = fmaxf(24.0f, scrollBarBg.height * (panelInnerHeight / totalContentHeight));
+            float sliderY = scrollBarBg.y + (recordScroll / (totalContentHeight - panelInnerHeight)) * (scrollBarBg.height - sliderHeight);
+            Rectangle scrollSlider = {
+                scrollBarBg.x,
+                sliderY,
+                scrollBarWidth,
+                sliderHeight
+            };
+            DrawRectangleRounded(scrollSlider, 0.5f, 4, Fade(BLACK, 0.6f));
         }
     }
 }
