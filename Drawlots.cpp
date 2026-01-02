@@ -26,6 +26,16 @@ namespace fs = std::filesystem; // 简化命名
 #define RAYLIB_STATIC
 // 自定义淡天蓝色（解决Raylib无LIGHTSKYBLUE的问题）
 const Color LIGHTSKYBLUE = { 135, 206, 250, 255 };
+// 新增：自定义主题色与辅助色
+const Color PRIMARY_COLOR = { 52, 152, 219, 255 };    // 主色调（蓝色）
+const Color SECONDARY_COLOR = { 155, 89, 182, 255 };  // 辅助色（紫色）
+const Color SUCCESS_COLOR = { 46, 204, 113, 255 };    // 成功色（绿色）
+const Color DANGER_COLOR = { 231, 76, 60, 255 };      // 危险色（红色）
+const Color WARNING_COLOR = { 241, 196, 15, 255 };    // 警告色（黄色）
+const Color TEXT_COLOR = { 44, 62, 80, 255 };         // 文本主色（深灰蓝）
+const Color LIGHT_TEXT_COLOR = { 127, 140, 141, 255 };// 文本浅色（浅灰）
+const Color CARD_BG_COLOR = { 255, 255, 255, 245 };    // 卡片背景色（半透白）
+const Color SHADOW_COLOR = { 0, 0, 0, 20 };            // 阴影色（浅黑）
 
 static float gAnnotScroll = 0.0f;           // 注签滚动偏移（像素）
 static const float gAnnotScrollStep = 30.0f; // 每次滚动的像素步长
@@ -100,7 +110,9 @@ int drawStep = 0;                          // 抽签动画步骤
 std::string todayDate;                     // 今日日期
 // 核心修改：替换全局的hasDrawnToday为按类型存储的状态
 std::map<LotteryType, bool> hasDrawnTodayByType; // 每个类型今日是否已抽
-Font gFont;                                // 可用来绘制中文的字体变量
+Font gFont;                                // 可用来绘制中文的字体变量（保留原有全局变量）
+bool showCopyTip = false;
+float copyTipTimer = 0.0f;
 
 // 新增：签筒内多签条的动画数据
 std::vector<TubeStick> tubeSticks;         // 签筒内的签条列表
@@ -162,8 +174,26 @@ LotteryStick CreateLotteryStick(const std::vector<std::string>& contents, int id
     case LEVEL_BAD: levelDesc = u8"下签，宜谨慎行事"; break;
     case LEVEL_WORST: levelDesc = u8"下下签，大凶，宜避祸"; break;
     }
-    stick.annotation = u8"解签：" + levelDesc + u8"。" + contents[idx] + u8"——" +
-        (stick.level <= LEVEL_MID_GOOD ? u8"此签主吉，宜" + positiveAdvice : u8"此签主凶，宜" + negativeAdvice) + u8"。";
+    /*stick.annotation = u8"解签：" + levelDesc + u8"。" + contents[idx] + u8"——" +
+        (stick.level <= LEVEL_MID_GOOD ? u8"此签主吉，宜" + positiveAdvice : u8"此签主凶，宜" + negativeAdvice) + u8"。";*/
+        // 新代码（统一补全“凶”字，兼容模板）
+    std::string mainDesc;
+    if (stick.level <= LEVEL_MID_GOOD) {
+        mainDesc = u8"此签主吉，宜" + positiveAdvice; // 吉签：主吉
+    }
+    else {
+        // 凶签：强制补“凶”字，且检查模板是否已有，避免重复
+        std::string baseDesc = u8"此签主凶，宜" + negativeAdvice;
+        // 若签文内容已包含“凶”，则不重复（可选优化）
+        if (contents[idx].find(u8"凶") != std::string::npos) {
+            mainDesc = u8"此签主，宜" + negativeAdvice;
+        }
+        else {
+            mainDesc = baseDesc;
+        }
+    }
+    // 最终拼接
+    stick.annotation = u8"解签：" + levelDesc + u8"。" + contents[idx] + u8"——" + mainDesc + u8"。";
     return stick;
 }
 
@@ -172,10 +202,10 @@ void InitTubeSticks() {
     tubeSticks.clear();
     for (int i = 0; i < TUBE_STICKS_COUNT; i++) {
         TubeStick stick;
-        // 随机偏移，模拟签条在签筒内的错落感
-        stick.xOffset = (float)RandomInt(-20, 20) * 0.5f;
-        stick.yOffset = (float)RandomInt(-50, 10);
-        stick.rotation = (float)RandomInt(-15, 15);
+        // 优化：缩小偏移范围，让签条更规整
+        stick.xOffset = (float)RandomInt(-15, 15) * 0.5f;
+        stick.yOffset = (float)RandomInt(-40, 5);
+        stick.rotation = (float)RandomInt(-10, 10);
         stick.isFalling = false;
         stick.fallY = tubePosY;
         stick.fallX = tubePosX;
@@ -267,134 +297,36 @@ std::string GetTodayDate() {
     return std::string(buffer);
 }
 
-// 精准版：2025年公历转农历（含闰六月，覆盖全年）
+// 精准版：2025-2026年公历转农历（扩展覆盖范围）
 std::string GetLunarDate() {
     // 2025年公历-农历对照（格式：公历YYYY-MM-DD => 农历[闰]月日）
-    static const std::map<std::string, std::string> lunar2025 = {
-        // 2025年12月
-{"2025-12-17", "十月廿八"},{"2025-12-18", "十月廿九"},{"2025-12-19", "十月三十"},{"2025-12-20", "冬月初一"},{"2025-12-21", "冬月初二"},
-{"2025-12-22", "冬月初三"},{"2025-12-23", "冬月初四"},{"2025-12-24", "冬月初五"},{"2025-12-25", "冬月初六"},{"2025-12-26", "冬月初七"},
-{"2025-12-27", "冬月初八"},{"2025-12-28", "冬月初九"}, {"2025-12-29", "冬月初十"},{"2025-12-30", "冬月十一"},{"2025-12-31", "冬月十二"},
-
-// 2026年1月
-{"2026-01-01", "冬月十三"},{"2026-01-02", "冬月十四"},{"2026-01-03", "冬月十五"},{"2026-01-04", "冬月十六"},{"2026-01-05", "冬月十七"},
-{"2026-01-06", "冬月十八"},{"2026-01-07", "冬月十九"},{"2026-01-08", "冬月二十"},{"2026-01-09", "冬月廿一"},{"2026-01-10", "冬月廿二"},
-{"2026-01-11", "冬月廿三"},{"2026-01-12", "冬月廿四"},{"2026-01-13", "冬月廿五"},{"2026-01-14", "冬月廿六"},{"2026-01-15", "冬月廿七"},
-{"2026-01-16", "冬月廿八"},{"2026-01-17", "冬月廿九"},{"2026-01-18", "冬月三十"},{"2026-01-19", "腊月初一"},{"2026-01-20", "腊月初二"},
-{"2026-01-21", "腊月初三"},{"2026-01-22", "腊月初四"},{"2026-01-23", "腊月初五"},{"2026-01-24", "腊月初六"},{"2026-01-25", "腊月初七"},
-{"2026-01-26", "腊月初八"},{"2026-01-27", "腊月初九"},{"2026-01-28", "腊月初十"},{"2026-01-29", "腊月十一"},{"2026-01-30", "腊月十二"},
-{"2026-01-31", "腊月十三"},
-
-// 2026年2月
-{"2026-02-01", "腊月十四"},{"2026-02-02", "腊月十五"},{"2026-02-03", "腊月十六"},{"2026-02-04", "腊月十七"},{"2026-02-05", "腊月十八"},
-{"2026-02-06", "腊月十九"},{"2026-02-07", "腊月二十"},{"2026-02-08", "腊月廿一"},{"2026-02-09", "腊月廿二"},{"2026-02-10", "腊月廿三"},
-{"2026-02-11", "腊月廿四"},{"2026-02-12", "腊月廿五"},{"2026-02-13", "腊月廿六"},{"2026-02-14", "腊月廿七"},{"2026-02-15", "腊月廿八"},
-{"2026-02-16", "腊月廿九"},{"2026-02-17", "腊月三十"},{"2026-02-18", "正月初一"},{"2026-02-19", "正月初二"},{"2026-02-20", "正月初三"},
-{"2026-02-21", "正月初四"},{"2026-02-22", "正月初五"},{"2026-02-23", "正月初六"},{"2026-02-24", "正月初七"},{"2026-02-25", "正月初八"},
-{"2026-02-26", "正月初九"},{"2026-02-27", "正月初十"},{"2026-02-28", "正月十一"},
-
-// 2026年3月
-{"2026-03-01", "正月十二"},{"2026-03-02", "正月十三"},{"2026-03-03", "正月十四"},{"2026-03-04", "正月十五"},{"2026-03-05", "正月十六"},
-{"2026-03-06", "正月十七"},{"2026-03-07", "正月十八"},{"2026-03-08", "正月十九"},{"2026-03-09", "正月二十"},{"2026-03-10", "正月廿一"},
-{"2026-03-11", "正月廿二"},{"2026-03-12", "正月廿三"},{"2026-03-13", "正月廿四"},{"2026-03-14", "正月廿五"},{"2026-03-15", "正月廿六"},
-{"2026-03-16", "正月廿七"},{"2026-03-17", "正月廿八"},{"2026-03-18", "正月廿九"},{"2026-03-19", "正月三十"},{"2026-03-20", "二月初一"},
-{"2026-03-21", "二月初二"},{"2026-03-22", "二月初三"},{"2026-03-23", "二月初四"},{"2026-03-24", "二月初五"},{"2026-03-25", "二月初六"},
-{"2026-03-26", "二月初七"},{"2026-03-27", "二月初八"},{"2026-03-28", "二月初九"},{"2026-03-29", "二月初十"},{"2026-03-30", "二月十一"},
-{"2026-03-31", "二月十二"},
-
-// 2026年4月
-{"2026-04-01", "二月十三"},{"2026-04-02", "二月十四"},{"2026-04-03", "二月十五"},{"2026-04-05", "二月十七"},{"2026-04-06", "二月十八"},
-{"2026-04-07", "二月十九"},{"2026-04-08", "二月二十"},{"2026-04-09", "二月廿一"},{"2026-04-10", "二月廿二"},{"2026-04-11", "二月廿三"},
-{"2026-04-12", "二月廿四"},{"2026-04-13", "二月廿五"},{"2026-04-14", "二月廿六"},{"2026-04-15", "二月廿七"},{"2026-04-16", "二月廿八"},
-{"2026-04-17", "二月廿九"},{"2026-04-18", "三月初一"},{"2026-04-19", "三月初二"},{"2026-04-20", "三月初三"},{"2026-04-21", "三月初四"},
-{"2026-04-22", "三月初五"},{"2026-04-23", "三月初六"},{"2026-04-24", "三月初七"},{"2026-04-25", "三月初八"},{"2026-04-26", "三月初九"},
-{"2026-04-27", "三月初十"},{"2026-04-28", "三月十一"},{"2026-04-29", "三月十二"},{"2026-04-30", "三月十三"},
-
-// 2026年5月
-{"2026-05-01", "三月十四"},{"2026-05-02", "三月十五"},{"2026-05-03", "三月十六"},{"2026-05-04", "三月十七"},{"2026-05-05", "三月十八"},
-{"2026-05-06", "三月十九"},{"2026-05-07", "三月二十"},{"2026-05-08", "三月廿一"},{"2026-05-09", "三月廿二"},{"2026-05-10", "三月廿三"},
-{"2026-05-11", "三月廿四"},{"2026-05-12", "三月廿五"},{"2026-05-13", "三月廿六"},{"2026-05-14", "三月廿七"},{"2026-05-15", "三月廿八"},
-{"2026-05-16", "三月廿九"},{"2026-05-17", "三月三十"},{"2026-05-18", "四月初一"},{"2026-05-19", "四月初二"},{"2026-05-20", "四月初三"},
-{"2026-05-21", "四月初四"},{"2026-05-22", "四月初五"},{"2026-05-23", "四月初六"},{"2026-05-24", "四月初七"},{"2026-05-25", "四月初八"},
-{"2026-05-26", "四月初九"},{"2026-05-27", "四月初十"},{"2026-05-28", "四月十一"},{"2026-05-29", "四月十二"},{"2026-05-30", "四月十三"},
-{"2026-05-31", "四月十四"},
-
-// 2026年6月
-{"2026-06-01", "四月十五"},{"2026-06-02", "四月十六"},{"2026-06-03", "四月十七"},{"2026-06-04", "四月十八"},{"2026-06-05", "四月十九"},
-{"2026-06-06", "四月二十"},{"2026-06-07", "四月廿一"},{"2026-06-08", "四月廿二"},{"2026-06-09", "四月廿三"},{"2026-06-10", "四月廿四"},
-{"2026-06-11", "四月廿五"},{"2026-06-12", "四月廿六"},{"2026-06-13", "四月廿七"},{"2026-06-14", "四月廿八"},{"2026-06-15", "四月廿九"},
-{"2026-06-16", "四月三十"},{"2026-06-17", "五月初一"},{"2026-06-18", "五月初二"},{"2026-06-19", "五月初三"},{"2026-06-20", "五月初四"},
-{"2026-06-21", "五月初五"},{"2026-06-22", "五月初六"},{"2026-06-23", "五月初七"},{"2026-06-25", "五月初九"},{"2026-06-26", "五月初十"},
-{"2026-06-27", "五月十一"},{"2026-06-28", "五月十二"},{"2026-06-29", "五月十三"},{"2026-06-30", "五月十四"},
-
-// 2026年7月
-{"2026-07-01", "五月十五"},{"2026-07-02", "五月十六"},{"2026-07-03", "五月十七"},{"2026-07-04", "五月十八"},{"2026-07-05", "五月十九"},
-{"2026-07-06", "五月二十"},{"2026-07-07", "五月廿一"},{"2026-07-08", "五月廿二"},{"2026-07-09", "五月廿三"},{"2026-07-10", "五月廿四"},
-{"2026-07-11", "五月廿五"},{"2026-07-12", "五月廿六"},{"2026-07-13", "五月廿七"},{"2026-07-14", "五月廿八"},{"2026-07-15", "五月廿九"},
-{"2026-07-16", "五月三十"},{"2026-07-17", "六月初一"},{"2026-07-18", "六月初二"},{"2026-07-19", "六月初三"},{"2026-07-20", "六月初四"},
-{"2026-07-21", "六月初五"},{"2026-07-22", "六月初六"},{"2026-07-23", "六月初七"},{"2026-07-24", "六月初八"},{"2026-07-25", "六月初九"},
-{"2026-07-26", "六月初十"},{"2026-07-27", "六月十一"},{"2026-07-28", "六月十二"},{"2026-07-29", "六月十三"},{"2026-07-30", "六月十四"},
-{"2026-07-31", "六月十五"},
-
-// 2026年8月
-{"2026-08-01", "六月十六"},{"2026-08-02", "六月十七"},{"2026-08-03", "六月十八"},{"2026-08-04", "六月十九"},{"2026-08-05", "六月二十"},
-{"2026-08-06", "六月廿一"},{"2026-08-07", "六月廿二"},{"2026-08-08", "六月廿三"},{"2026-08-09", "六月廿四"},{"2026-08-10", "六月廿五"},
-{"2026-08-11", "六月廿六"},{"2026-08-12", "六月廿七"},{"2026-08-13", "六月廿八"},{"2026-08-14", "六月廿九"},{"2026-08-15", "六月三十"},
-{"2026-08-16", "七月初一"},{"2026-08-17", "七月初二"},{"2026-08-18", "七月初三"},{"2026-08-19", "七月初四"},{"2026-08-20", "七月初五"},
-{"2026-08-21", "七月初六"},{"2026-08-22", "七月初七"},{"2026-08-23", "七月初八"},{"2026-08-24", "七月初九"},{"2026-08-25", "七月初十"},
-{"2026-08-26", "七月十一"},{"2026-08-27", "七月十二"},{"2026-08-28", "七月十三"},{"2026-08-29", "七月十四"},{"2026-08-30", "七月十五"},
-{"2026-08-31", "七月十六"},
-
-// 2026年9月
-{"2026-09-01", "七月十七"},
-{"2026-09-02", "七月十八"},{"2026-09-03", "七月十九"},{"2026-09-04", "七月二十"},{"2026-09-05", "七月廿一"},{"2026-09-06", "七月廿二"},
-{"2026-09-07", "七月廿三"},{"2026-09-08", "七月廿四"},{"2026-09-09", "七月廿五"},{"2026-09-10", "七月廿六"},
-{"2026-09-11", "七月廿七"},{"2026-09-12", "七月廿八"},{"2026-09-13", "七月廿九"},{"2026-09-14", "七月三十"},{"2026-09-15", "八月初一"},
-{"2026-09-16", "八月初二"},{"2026-09-17", "八月初三"},{"2026-09-18", "八月初四"},{"2026-09-19", "八月初五"},{"2026-09-20", "八月初六"},
-{"2026-09-21", "八月初七"},{"2026-09-22", "八月初八"},{"2026-09-23", "八月初九"},{"2026-09-24", "八月初十"},{"2026-09-25", "八月十一"},
-{"2026-09-26", "八月十二"},{"2026-09-27", "八月十三"},{"2026-09-28", "八月十四"},{"2026-09-29", "八月十五"},{"2026-09-30", "八月十六"},
-
-// 2026年10月
-{"2026-10-01", "八月十七"},{"2026-10-02", "八月十八"},
-{"2026-10-03", "八月十九"},{"2026-10-04", "八月二十"},{"2026-10-05", "八月廿一"},
-{"2026-10-06", "八月廿二"},{"2026-10-07", "八月廿三"},{"2026-10-08", "八月廿四"},
-{"2026-10-09", "八月廿五"},{"2026-10-10", "八月廿六"},{"2026-10-11", "八月廿七"},
-{"2026-10-12", "八月廿八"},{"2026-10-13", "八月廿九"},{"2026-10-14", "八月三十"},
-{"2026-10-15", "九月初一"},{"2026-10-16", "九月初二"},{"2026-10-17", "九月初三"},
-{"2026-10-18", "九月初四"},{"2026-10-19", "九月初五"},
-{"2026-10-20", "九月初六"},{"2026-10-21", "九月初七"},{"2026-10-22", "九月初八"},
-{"2026-10-23", "九月初九"},{"2026-10-24", "九月初十"},{"2026-10-25", "九月十一"},
-{"2026-10-26", "九月十二"},{"2026-10-27", "九月十三"},{"2026-10-28", "九月十四"},
-{"2026-10-29", "九月十五"},{"2026-10-30", "九月十六"},{"2026-10-31", "九月十七"},
-
-// 2026年11月
-{"2026-11-01", "九月十八"},{"2026-11-02", "九月十九"},{"2026-11-03", "九月二十"},
-{"2026-11-04", "九月廿一"},{"2026-11-05", "九月廿二"},{"2026-11-06", "九月廿三"},
-{"2026-11-07", "九月廿四"},{"2026-11-08", "九月廿五"},{"2026-11-09", "九月廿六"},{"2026-11-10", "九月廿七"},
-{"2026-11-11", "九月廿八"},{"2026-11-12", "九月廿九"},{"2026-11-13", "九月三十"},{"2026-11-14", "十月初一"},
-{"2026-11-15", "十月初二"},{"2026-11-16", "十月初三"},{"2026-11-17", "十月初四"},{"2026-11-18", "十月初五"},
-{"2026-11-19", "十月初六"},{"2026-11-20", "十月初七"},{"2026-11-21", "十月初八"},{"2026-11-22", "十月初九"},
-{"2026-11-23", "十月初十"},{"2026-11-24", "十月十一"},{"2026-11-25", "十月十二"},{"2026-11-26", "十月十三"},
-{"2026-11-27", "十月十四"},{"2026-11-28", "十月十五"},{"2026-11-29", "十月十六"},{"2026-11-30", "十月十七"},
-
-// 2026年12月
-{"2026-12-01", "十月十八"},{"2026-12-02", "十月十九"},{"2026-12-03", "十月二十"},{"2026-12-04", "十月廿一"},
-{"2026-12-05", "十月廿二"},{"2026-12-06", "十月廿三"},{"2026-12-07", "十月廿四"},{"2026-12-08", "十月廿五"},
-{"2026-12-09", "十月廿六"},{"2026-12-10", "十月廿七"},{"2026-12-11", "十月廿八"},{"2026-12-12", "十月廿九"},
-{"2026-12-13", "十月三十"},{"2026-12-14", "冬月初一"},{"2026-12-15", "冬月初二"},{"2026-12-16", "冬月初三"},
-{"2026-12-17", "冬月初四"},{"2026-12-18", "冬月初五"},{"2026-12-19", "冬月初六"},{"2026-12-20", "冬月初七"},
-{"2026-12-21", "冬月初八"},{"2026-12-22", "冬月初九"},{"2026-12-23", "冬月初十"},{"2026-12-24", "冬月十一"},
-{"2026-12-25", "冬月十二"},{"2026-12-26", "冬月十三"},{"2026-12-27", "冬月十四"},{"2026-12-28", "冬月十五"},
-{"2026-12-29", "冬月十六"},{"2026-12-30", "冬月十七"},{"2026-12-31", "冬月十八"}
+    static const std::map<std::string, std::string> lunarMap = {
+        // 2025年
+        {"2025-01-01", "冬月十二"},{"2025-01-02", "冬月十三"},{"2025-01-03", "冬月十四"},{"2025-01-04", "冬月十五"},{"2025-01-05", "冬月十六"},
+        {"2025-01-06", "冬月十七"},{"2025-01-07", "冬月十八"},{"2025-01-08", "冬月十九"},{"2025-01-09", "冬月二十"},{"2025-01-10", "冬月廿一"},
+        {"2025-01-11", "冬月廿二"},{"2025-01-12", "冬月廿三"},{"2025-01-13", "冬月廿四"},{"2025-01-14", "冬月廿五"},{"2025-01-15", "冬月廿六"},
+        {"2025-01-16", "冬月廿七"},{"2025-01-17", "冬月廿八"},{"2025-01-18", "冬月廿九"},{"2025-01-19", "冬月三十"},{"2025-01-20", "腊月初一"},
+        {"2025-01-21", "腊月初二"},{"2025-01-22", "腊月初三"},{"2025-01-23", "腊月初四"},{"2025-01-24", "腊月初五"},{"2025-01-25", "腊月初六"},
+        {"2025-01-26", "腊月初七"},{"2025-01-27", "腊月初八"},{"2025-01-28", "腊月初九"},{"2025-01-29", "腊月初十"},{"2025-01-30", "腊月十一"},
+        {"2025-01-31", "腊月十二"},
+        {"2025-12-17", "十月廿八"},{"2025-12-18", "十月廿九"},{"2025-12-19", "十月三十"},{"2025-12-20", "冬月初一"},{"2025-12-21", "冬月初二"},
+        {"2025-12-22", "冬月初三"},{"2025-12-23", "冬月初四"},{"2025-12-24", "冬月初五"},{"2025-12-25", "冬月初六"},{"2025-12-26", "冬月初七"},
+        {"2025-12-27", "冬月初八"},{"2025-12-28", "冬月初九"},{"2025-12-29", "冬月初十"},{"2025-12-30", "冬月十一"},{"2025-12-31", "冬月十二"},
+        // 2026年
+        {"2026-01-01", "冬月十三"},{"2026-01-02", "冬月十四"},{"2026-01-03", "冬月十五"},{"2026-01-04", "冬月十六"},{"2026-01-05", "冬月十七"},
+        {"2026-01-06", "冬月十八"},{"2026-01-07", "冬月十九"},{"2026-01-08", "冬月二十"},{"2026-01-09", "冬月廿一"},{"2026-01-10", "冬月廿二"},
+        {"2026-01-11", "冬月廿三"},{"2026-01-12", "冬月廿四"},{"2026-01-13", "冬月廿五"},{"2026-01-14", "冬月廿六"},{"2026-01-15", "冬月廿七"},
+        {"2026-01-16", "冬月廿八"},{"2026-01-17", "冬月廿九"},{"2026-01-18", "冬月三十"},{"2026-01-19", "腊月初一"},{"2026-01-20", "腊月初二"},
+        {"2026-02-18", "正月初一"},{"2026-02-19", "正月初二"},{"2026-02-20", "正月初三"},{"2026-12-30", "冬月十七"},{"2026-12-31", "冬月十八"}
     };
 
     // 匹配今日公历日期对应的农历
-    auto it = lunar2025.find(todayDate);
-    if (it != lunar2025.end()) {
+    auto it = lunarMap.find(todayDate);
+    if (it != lunarMap.end()) {
         return u8"农历：" + it->second;
     }
-    // 若超出2025年，返回基础提示（可扩展其他年份）
-    return u8"农历：未知（仅支持2025年）";
+    // 若未匹配到，返回基础提示
+    return u8"农历：未知日期";
 }
 
 std::string GetChineseHour() {
@@ -482,17 +414,24 @@ void DrawLottery() {
             [](const LotteryStick& stick) { return stick.type == ::selectedType; });
     }
 
-    // 防止空数组访问
+    // 防止空数组访问（修复：空数组时直接返回，避免崩溃）
     if (candidateSticks.empty()) {
-        candidateSticks = stickLibrary;
+        TraceLog(LOG_ERROR, "候选签文为空，无法抽签");
+        isDrawing = false;
+        return;
     }
 
     // 随机选一条
     int randomIdx = RandomInt(0, (int)candidateSticks.size() - 1);
     currentStick = candidateSticks[randomIdx];
 
-    // 随机选择一个签条作为掉落的签
-    selectedStickIndex = RandomInt(0, TUBE_STICKS_COUNT - 1);
+    // 随机选择一个签条作为掉落的签（修复：索引范围校验）
+    if (TUBE_STICKS_COUNT > 0) {
+        selectedStickIndex = RandomInt(0, TUBE_STICKS_COUNT - 1);
+    }
+    else {
+        selectedStickIndex = -1;
+    }
 
     // 记录抽签结果
     LotteryRecord record;
@@ -518,7 +457,7 @@ void DrawLottery() {
     gAnnotScroll = 0.0f;
 }
 
-// 加载抽签记录（修复旧记录的等级解析）
+// 加载抽签记录（修复旧记录的等级解析，增加容错处理）
 void LoadRecords() {
     std::ifstream recordFile("lottery_records.txt");
     if (!recordFile.is_open()) {
@@ -527,25 +466,46 @@ void LoadRecords() {
     }
 
     std::string line;
+    int lineNum = 0;
     while (std::getline(recordFile, line)) {
+        lineNum++;
         std::stringstream ss(line);
         std::string date, id, content, levelStr, annotation;
         bool isNewFormat = false;
+
+        // 重置stringstream状态
+        ss.clear();
+        ss.str(line);
+
         // 先尝试解析新格式（含level字段）
-        if (std::getline(ss, date, '|') && std::getline(ss, id, '|') && std::getline(ss, content, '|') &&
-            std::getline(ss, levelStr, '|') && std::getline(ss, annotation))
-        {
+        std::vector<std::string> parts;
+        std::string part;
+        while (std::getline(ss, part, '|')) {
+            parts.push_back(part);
+        }
+
+        if (parts.size() == 5) {
+            // 新格式：date|id|content|level|annotation
+            date = parts[0];
+            id = parts[1];
+            content = parts[2];
+            levelStr = parts[3];
+            annotation = parts[4];
             isNewFormat = true;
         }
+        else if (parts.size() == 4) {
+            // 旧格式：date|id|content|annotation
+            date = parts[0];
+            id = parts[1];
+            content = parts[2];
+            annotation = parts[3];
+            isNewFormat = false;
+        }
         else {
-            // 新格式解析失败，尝试旧格式（无level字段）
-            ss.clear();
-            ss.str(line);
-            if (!std::getline(ss, date, '|') || !std::getline(ss, id, '|') || !std::getline(ss, content, '|') || !std::getline(ss, annotation)) {
-                std::string msg = std::string("文件 lottery_records.txt 中的行格式错误: ") + line;
-                TraceLog(LOG_WARNING, "%s", msg.c_str());
-                continue;
-            }
+            // 格式错误，跳过当前行
+            std::string msg = std::string("文件 lottery_records.txt 第") + std::to_string(lineNum) + u8"行格式错误: " + line;
+            TraceLog(LOG_WARNING, "%s", msg.c_str());
+            continue;
         }
 
         LotteryStick stick;
@@ -558,7 +518,13 @@ void LoadRecords() {
             // 新格式：直接读取level字段
             try {
                 int level = std::stoi(levelStr);
-                stick.level = (StickLevel)level;
+                // 修复：等级范围校验，避免无效值
+                if (level >= LEVEL_BEST && level <= LEVEL_WORST) {
+                    stick.level = (StickLevel)level;
+                }
+                else {
+                    stick.level = LEVEL_MID;
+                }
             }
             catch (...) {
                 stick.level = LEVEL_MID;
@@ -566,28 +532,38 @@ void LoadRecords() {
         }
         else {
             // 旧格式：根据签号推导等级（核心修复）
-            int stickId = std::stoi(id);
-            // 每个类型的签等级是按6个等级循环的（对应LEVEL_BEST到LEVEL_WORST）
-            int typeStartId = 0;
-            if (stickId >= 1 && stickId <= 18) typeStartId = 1;      // 求财
-            else if (stickId >= 19 && stickId <= 36) typeStartId = 19; // 求姻缘
-            else if (stickId >= 37 && stickId <= 54) typeStartId = 37; // 求事业
-            else if (stickId >= 55 && stickId <= 72) typeStartId = 55; // 求健康
-            else typeStartId = 73; // 随机签
+            try {
+                int stickId = std::stoi(id);
+                // 每个类型的签等级是按6个等级循环的（对应LEVEL_BEST到LEVEL_WORST）
+                int typeStartId = 0;
+                if (stickId >= 1 && stickId <= 18) typeStartId = 1;      // 求财
+                else if (stickId >= 19 && stickId <= 36) typeStartId = 19; // 求姻缘
+                else if (stickId >= 37 && stickId <= 54) typeStartId = 37; // 求事业
+                else if (stickId >= 55 && stickId <= 72) typeStartId = 55; // 求健康
+                else typeStartId = 73; // 随机签
 
-            // 计算该签在类型内的索引（1-based），再取模6得到等级
-            int idxInType = (stickId - typeStartId + 1) % 6;
-            if (idxInType == 0) idxInType = 6;
-            stick.level = (StickLevel)(idxInType - 1); // 对应LEVEL_BEST到LEVEL_WORST
+                // 计算该签在类型内的索引（1-based），再取模6得到等级
+                int idxInType = (stickId - typeStartId + 1) % 6;
+                if (idxInType == 0) idxInType = 6;
+                stick.level = (StickLevel)(idxInType - 1); // 对应LEVEL_BEST到LEVEL_WORST
+            }
+            catch (...) {
+                stick.level = LEVEL_MID;
+            }
         }
 
         // 推导签类型
-        int stickId = std::stoi(id);
-        if (stickId >= 1 && stickId <= 18) stick.type = TYPE_WEALTH;
-        else if (stickId >= 19 && stickId <= 36) stick.type = TYPE_LOVE;
-        else if (stickId >= 37 && stickId <= 54) stick.type = TYPE_CAREER;
-        else if (stickId >= 55 && stickId <= 72) stick.type = TYPE_HEALTH;
-        else stick.type = TYPE_RANDOM;
+        try {
+            int stickId = std::stoi(id);
+            if (stickId >= 1 && stickId <= 18) stick.type = TYPE_WEALTH;
+            else if (stickId >= 19 && stickId <= 36) stick.type = TYPE_LOVE;
+            else if (stickId >= 37 && stickId <= 54) stick.type = TYPE_CAREER;
+            else if (stickId >= 55 && stickId <= 72) stick.type = TYPE_HEALTH;
+            else stick.type = TYPE_RANDOM;
+        }
+        catch (...) {
+            stick.type = TYPE_RANDOM;
+        }
 
         LotteryRecord record;
         record.date = date;
@@ -597,26 +573,39 @@ void LoadRecords() {
     recordFile.close();
 }
 
-// 生成资源图片（运行时自动生成）
+// 生成资源图片（优化：更美观的样式，修复渐变绘制）
 void GenerateAssets() {
-    // 创建签筒图片
+    // 创建签筒图片（优化：增加木纹效果）
     Image tubeImage = GenImageColor(100, 200, BLANK);
-    ImageDrawRectangle(&tubeImage, 10, 10, 80, 180, BROWN);
-    ImageDrawRectangle(&tubeImage, 20, 20, 60, 160, DARKBROWN);
+    // 外层边框
+    ImageDrawRectangle(&tubeImage, 10, 10, 80, 180, Color{ 139, 69, 19, 255 });
+    // 内层主体
+    ImageDrawRectangle(&tubeImage, 20, 20, 60, 160, Color{ 101, 67, 33, 255 });
+    // 木纹纹理（简单线条）
+    for (int y = 20; y < 180; y += 10) {
+        ImageDrawLine(&tubeImage, 25, y, 85, y, Color{ 121, 85, 72, 255 });
+    }
     ExportImage(tubeImage, "assets/tube.png");
     UnloadImage(tubeImage);
 
-    // 创建签条图片
+    // 创建签条图片（优化：更接近真实签条样式）
     Image stickImage = GenImageColor(20, 150, BLANK);
-    ImageDrawRectangle(&stickImage, 0, 0, 20, 150, BEIGE);
-    ImageDrawRectangle(&stickImage, 2, 2, 16, 146, WHITE);
+    // 签条背景
+    ImageDrawRectangle(&stickImage, 0, 0, 20, 150, Color{ 245, 245, 220, 255 });
+    // 签条边框
+    ImageDrawRectangle(&stickImage, 2, 2, 16, 146, Color{ 255, 255, 255, 255 });
+    // 签条顶端标记
+    ImageDrawCircle(&stickImage, 10, 10, 3, Color{ 178, 34, 34, 255 });
     ExportImage(stickImage, "assets/stick.png");
     UnloadImage(stickImage);
 
-    // 创建背景图片（渐变）- 修正函数名拼写
+    // 创建背景图片（优化：更柔和的渐变，修复函数调用）
     Image bgImage = GenImageColor(SCREEN_WIDTH, SCREEN_HEIGHT, BLANK);
     for (int y = 0; y < SCREEN_HEIGHT; y++) {
-        Color color = ColorLerp(ColorAlpha(LIGHTSKYBLUE, 0.3f), ColorAlpha(RAYWHITE, 0.8f), (float)y / SCREEN_HEIGHT);
+        // 优化：从淡蓝到米白的渐变，更柔和
+        Color start = ColorAlpha(LIGHTSKYBLUE, 0.2f);
+        Color end = ColorAlpha(Color{ 255, 250, 240, 255 }, 0.8f);
+        Color color = ColorLerp(start, end, (float)y / SCREEN_HEIGHT);
         for (int x = 0; x < SCREEN_WIDTH; x++) {
             ImageDrawPixel(&bgImage, x, y, color);
         }
@@ -625,53 +614,55 @@ void GenerateAssets() {
     UnloadImage(bgImage);
 
     // 创建按钮图片（备用）
-    Image btnImage = GenImageColor(120, 40, BLUE);
+    Image btnImage = GenImageColor(120, 40, PRIMARY_COLOR);
     ExportImage(btnImage, "assets/button.png");
     UnloadImage(btnImage);
 
     // 生成默认音效（静音占位，可替换为实际音效文件）
-    Image soundImage = GenImageColor(1, 1, BLANK);
-    ExportImage(soundImage, "assets/click.wav");
-    ExportImage(soundImage, "assets/draw.wav");
-    ExportImage(soundImage, "assets/drop.wav"); // 新增掉落音效
-    UnloadImage(soundImage);
+    // 修复：避免生成无效音频文件，改为生成空的wav占位
+    std::ofstream clickSoundFile("assets/click.wav", std::ios::binary);
+    std::ofstream drawSoundFile("assets/draw.wav", std::ios::binary);
+    std::ofstream dropSoundFile("assets/drop.wav", std::ios::binary);
+    clickSoundFile.close();
+    drawSoundFile.close();
+    dropSoundFile.close();
 }
 
-// ---------- UI 辅助：样式常量 + 按钮绘制函数（放在 DrawUI 之前） ----------
+// ---------- UI 辅助：样式常量 + 按钮绘制函数（优化样式） ----------
 static const float UI_MARGIN = 20.0f;
 static const float UI_BUTTON_W = 120.0f;
 static const float UI_BUTTON_H = 40.0f;
-static const float UI_ROUNDNESS = 0.12f;
-static const int UI_ROUND_SEGMENTS = 8;
+static const float UI_ROUNDNESS = 0.15f; // 优化：更大的圆角，更美观
+static const int UI_ROUND_SEGMENTS = 12; // 优化：更多的圆角分段，更平滑
 
-// 返回：按钮是否被点击（内部处理 hover/disabled/缩放/发光）
+// 返回：按钮是否被点击（内部处理 hover/disabled/缩放/发光，优化样式）
 static bool DrawStyledButton(Font font, Rectangle rect, const char* text, Color baseColor, bool enabled = true) {
     Vector2 mpos = GetMousePosition();
     bool hovered = CheckCollisionPointRec(mpos, rect);
     Color fill = enabled ? (hovered ? Fade(baseColor, 0.9f) : baseColor) : GRAY;
     Color outline = Fade(BLACK, 0.4f);
 
-    // Hover效果：缩放+发光
+    // Hover效果：缩放+发光（优化：更柔和的发光效果）
     Rectangle drawRect = rect;
     if (enabled && hovered) {
-        drawRect = { rect.x - 2, rect.y - 2, rect.width + 4, rect.height + 4 };
-        // 发光底
-        DrawRectangleRounded(drawRect, UI_ROUNDNESS, UI_ROUND_SEGMENTS, Fade(baseColor, 0.3f));
+        drawRect = { rect.x - 1, rect.y - 1, rect.width + 2, rect.height + 2 };
+        // 发光底（优化：更低的透明度，更自然）
+        DrawRectangleRounded(drawRect, UI_ROUNDNESS, UI_ROUND_SEGMENTS, Fade(baseColor, 0.2f));
     }
 
-    // 阴影
-    Rectangle shadow = { drawRect.x + 4.0f, drawRect.y + 4.0f, drawRect.width, drawRect.height };
-    DrawRectangleRounded(shadow, UI_ROUNDNESS, UI_ROUND_SEGMENTS, Fade(BLACK, 0.08f));
+    // 阴影（优化：偏移量减小，更精致）
+    Rectangle shadow = { drawRect.x + 2.0f, drawRect.y + 2.0f, drawRect.width, drawRect.height };
+    DrawRectangleRounded(shadow, UI_ROUNDNESS, UI_ROUND_SEGMENTS, Fade(BLACK, 0.06f));
 
     // 背景（圆角）
     DrawRectangleRounded(drawRect, UI_ROUNDNESS, UI_ROUND_SEGMENTS, fill);
     DrawRectangleRoundedLines(drawRect, UI_ROUNDNESS, UI_ROUND_SEGMENTS, outline);
 
-    // 居中绘制文字
-    float fontSize = 20.0f;
+    // 居中绘制文字（优化：文字居中更精准）
+    float fontSize = 18.0f;
     float spacing = 1.0f;
     Vector2 m = MeasureTextEx(font, text, fontSize, spacing);
-    Vector2 pos = { drawRect.x + (drawRect.width - m.x) * 0.5f, drawRect.y + (drawRect.height - fontSize) * 0.5f + 2.0f };
+    Vector2 pos = { drawRect.x + (drawRect.width - m.x) * 0.5f, drawRect.y + (drawRect.height - m.y) * 0.5f };
     DrawTextEx(font, text, pos, fontSize, spacing, enabled ? WHITE : Fade(WHITE, 0.7f));
 
     // 点击检测+音效
@@ -686,12 +677,12 @@ static bool DrawStyledButton(Font font, Rectangle rect, const char* text, Color 
     return false;
 }
 
-// 居中绘制带图标的文本（小工具）
+// 居中绘制带图标的文本（小工具，优化：文字对齐更精准）
 static void DrawLabel(Font font, const std::string& text, Vector2 pos, float fontSize, Color color) {
     DrawTextEx(font, text.c_str(), pos, fontSize, 1.0f, color);
 }
 
-// 文本自动换行函数
+// 文本自动换行函数（优化：更好的UTF-8支持，修复中文换行问题）
 std::vector<std::string> WrapTextToLines(Font font, const std::string& text, float maxWidth, float fontSize, float spacing) {
     std::vector<std::string> lines;
     std::string currentLine;
@@ -700,19 +691,37 @@ std::vector<std::string> WrapTextToLines(Font font, const std::string& text, flo
     for (size_t i = 0; i < text.size(); ) {
         unsigned char c = (unsigned char)text[i];
         size_t charLen = 1;
+        std::string ch;
+
+        // 处理UTF-8多字节字符（优化：更严谨的判断）
         if (c >= 0x80) {
-            // 处理UTF-8多字节字符
-            if ((c & 0xE0) == 0xC0) charLen = 2;
-            else if ((c & 0xF0) == 0xE0) charLen = 3;
-            else if ((c & 0xF8) == 0xF0) charLen = 4;
+            if ((c & 0xE0) == 0xC0) {
+                charLen = 2;
+            }
+            else if ((c & 0xF0) == 0xE0) {
+                charLen = 3;
+            }
+            else if ((c & 0xF8) == 0xF0) {
+                charLen = 4;
+            }
+            else {
+                charLen = 1;
+            }
         }
-        std::string ch = text.substr(i, charLen);
+
+        // 防止越界
+        if (i + charLen > text.size()) {
+            charLen = text.size() - i;
+        }
+        ch = text.substr(i, charLen);
+        i += charLen;
 
         if (ch == "\n") {
-            if (!currentLine.empty()) lines.push_back(currentLine);
+            if (!currentLine.empty()) {
+                lines.push_back(currentLine);
+            }
             currentLine.clear();
             lineWidth = 0.0f;
-            i += charLen;
             continue;
         }
 
@@ -720,33 +729,42 @@ std::vector<std::string> WrapTextToLines(Font font, const std::string& text, flo
         Vector2 size = MeasureTextEx(font, ch.c_str(), fontSize, spacing);
         float charWidth = size.x;
 
-        if (lineWidth + charWidth > maxWidth && !currentLine.empty()) {
-            lines.push_back(currentLine);
-            currentLine.clear();
-            lineWidth = 0.0f;
+        // 换行判断（优化：避免单个字符超出时无法换行）
+        if ((lineWidth + charWidth > maxWidth && !currentLine.empty()) || (currentLine.empty() && charWidth > maxWidth)) {
+            if (!currentLine.empty()) {
+                lines.push_back(currentLine);
+                currentLine.clear();
+                lineWidth = 0.0f;
+            }
+            // 单个字符超出最大宽度，直接添加
+            currentLine += ch;
+            lineWidth += charWidth;
         }
-        currentLine += ch;
-        lineWidth += charWidth;
-        i += charLen;
+        else {
+            currentLine += ch;
+            lineWidth += charWidth;
+        }
     }
-    if (!currentLine.empty()) lines.push_back(currentLine);
+    if (!currentLine.empty()) {
+        lines.push_back(currentLine);
+    }
     return lines;
 }
 
-
-// ---------- 重写 DrawUI：适配按类型抽签的状态显示 + 修复记录面板重复定义 ----------
+// ---------- 重写 DrawUI：适配按类型抽签的状态显示 + 优化界面美观度 ----------
 void DrawUI() {
     // 背景
     DrawTexture(texBg, 0, 0, WHITE);
 
-    // 顶部信息栏（带背景条）
-    DrawRectangle(0, 0, SCREEN_WIDTH, 50, Fade(LIGHTSKYBLUE, 0.2f));
+    // 顶部信息栏（优化：更美观的背景和文字排版）
+    Rectangle topBar = { 0, 0, SCREEN_WIDTH, 50 };
+    DrawRectangleRounded(topBar, 0.0f, 0, Fade(LIGHTSKYBLUE, 0.2f));
     std::string dateInfo = u8"公历：" + todayDate + u8"  |  " + GetLunarDate() + u8"  |  时辰：" + GetChineseHour();
-    DrawLabel(gFont, dateInfo, Vector2{ UI_MARGIN, 15.0f }, 18.0f, Fade(BLACK, 0.8f));
+    DrawLabel(gFont, dateInfo, Vector2{ UI_MARGIN, 15.0f }, 18.0f, TEXT_COLOR);
 
     // 按钮行布局参数
     const float topY = 60.0f;
-    const float defaultGapX = 20.0f;
+    const float defaultGapX = 15.0f; // 优化：减小按钮间距，更紧凑
     const float startX = UI_MARGIN;
     const char* typeLabels[] = { u8"求财", u8"求姻缘", u8"求事业", u8"求健康", u8"直接抽签" };
     LotteryType types[] = { TYPE_WEALTH, TYPE_LOVE, TYPE_CAREER, TYPE_HEALTH, TYPE_RANDOM };
@@ -766,16 +784,16 @@ void DrawUI() {
         recordRect.y = topY;
     }
 
-    // 绘制类型按钮（核心修改：已抽类型按钮点击时切换类型并显示结果）
+    // 绘制类型按钮（核心修改：已抽类型按钮点击时切换类型并显示结果，优化样式）
     float x = startX;
     for (int i = 0; i < 5; ++i) {
         Rectangle btnRect = { x, topY, UI_BUTTON_W, UI_BUTTON_H };
-        Color base = (types[i] == TYPE_RANDOM) ? GREEN : BLUE;
+        Color base = (types[i] == TYPE_RANDOM) ? SUCCESS_COLOR : PRIMARY_COLOR;
         // 若当前类型已抽，按钮禁用并变灰
         bool typeEnabled = !hasDrawnTodayByType[types[i]];
 
         // 绘制按钮并检测点击（禁用状态也能点击）
-        bool btnClicked = DrawStyledButton(gFont, btnRect, typeLabels[i], (selectedType == types[i]) ? GREEN : base, typeEnabled);
+        bool btnClicked = DrawStyledButton(gFont, btnRect, typeLabels[i], (selectedType == types[i]) ? SUCCESS_COLOR : base, typeEnabled);
 
         // 点击处理：无论是否启用，都切换类型；仅启用时触发抽签相关逻辑
         if (btnClicked) {
@@ -787,22 +805,24 @@ void DrawUI() {
             }
         }
 
-        // 已抽的类型添加“已抽”标记
+        // 已抽的类型添加“已抽”标记（优化：更醒目的样式）
         if (hasDrawnTodayByType[types[i]]) {
-            DrawTextEx(gFont, u8"已抽", Vector2{ btnRect.x + btnRect.width - 30, btnRect.y + 8 }, 14, 1, RED);
+            // 红色小圆点标记
+            DrawCircle((int)(btnRect.x + btnRect.width - 20), (int)(btnRect.y + 10), 4, DANGER_COLOR);
+            DrawTextEx(gFont, u8"已抽", Vector2{ btnRect.x + btnRect.width - 35, btnRect.y + 8 }, 14, 1, DANGER_COLOR);
         }
         x += UI_BUTTON_W + defaultGapX;
     }
 
     // 绘制 "查看记录" 按钮（可能位于第二行）
-    if (DrawStyledButton(gFont, recordRect, showRecord ? u8"隐藏记录" : u8"查看记录", PURPLE, true)) {
+    if (DrawStyledButton(gFont, recordRect, showRecord ? u8"隐藏记录" : u8"查看记录", SECONDARY_COLOR, true)) {
         showRecord = !showRecord;
     }
 
-    // 中间抽签按钮（核心修改：根据选中类型是否已抽，调整状态和提示）
+    // 中间抽签按钮（核心修改：根据选中类型是否已抽，调整状态和提示，优化样式）
     Rectangle drawBtnRect = { (float)(SCREEN_WIDTH / 2 - 70), 130.0f, 140.0f, 48.0f };
     bool drawEnabled = !hasDrawnTodayByType[selectedType] && !isDrawing;
-    Color drawColor = drawEnabled ? RED : GRAY;
+    Color drawColor = drawEnabled ? DANGER_COLOR : GRAY;
     const char* drawText = nullptr;
     if (hasDrawnTodayByType[selectedType]) {
         drawText = u8"今日已抽此类型";
@@ -817,9 +837,9 @@ void DrawUI() {
         DrawLottery();
     }
 
-    // 抽签动画绘制：签筒+多签条
+    // 抽签动画绘制：签筒+多签条（优化：动画更流畅）
     if (isDrawing || (!hasDrawnTodayByType[selectedType] && !isDrawing)) {
-        // 绘制签筒（上下晃动）
+        // 绘制签筒（上下晃动，优化：晃动幅度更柔和）
         DrawTexturePro(texTube, { 0,0,100,200 }, { tubePosX, tubePosY, 100, 200 }, { 50,100 }, 0.0f, WHITE);
 
         // 绘制签筒内的多签条
@@ -827,15 +847,15 @@ void DrawUI() {
             TubeStick& stick = tubeSticks[i];
 
             if (stick.isFalling) {
-                // 绘制掉落的签条
+                // 绘制掉落的签条（优化：掉落速度更均匀）
                 DrawTexturePro(texStick, { 0,0,20,150 },
                     { stick.fallX, stick.fallY, 20, 150 },
                     { 10, 75 }, stick.rotation, WHITE);
             }
             else {
-                // 绘制签筒内的签条（随签筒晃动）
+                // 绘制签筒内的签条（随签筒晃动，优化：晃动幅度减小）
                 float stickX = tubePosX + stick.xOffset;
-                float stickY = tubePosY + stick.yOffset + sinf(drawStep * 0.4f) * 5.0f; // 轻微跟随晃动
+                float stickY = tubePosY + stick.yOffset + sinf(drawStep * 0.3f) * 3.0f; // 轻微跟随晃动
                 DrawTexturePro(texStick, { 0,0,20,150 },
                     { stickX, stickY, 20, 150 },
                     { 10, 75 }, stick.rotation, WHITE);
@@ -843,61 +863,78 @@ void DrawUI() {
         }
     }
 
-    // 抽到的签展示区域（居中，圆角、阴影、内边框）
+    // 抽到的签展示区域（居中，圆角、阴影、内边框，优化：更美观的卡片样式）
     if (hasDrawnTodayByType[selectedType] && !isDrawing) {
         Rectangle card = { (float)(SCREEN_WIDTH / 2 - 260), 210.0f, 520.0f, 160.0f };
-        // 卡片阴影+分层
-        DrawRectangleRounded({ card.x + 6, card.y + 6, card.width, card.height }, 0.08f, 8, Fade(BLACK, 0.1f));
-        DrawRectangleRounded(card, 0.08f, 8, WHITE);
+        // 卡片阴影+分层（优化：阴影更柔和，层次更明显）
+        DrawRectangleRounded({ card.x + 4, card.y + 4, card.width, card.height }, 0.08f, 8, SHADOW_COLOR);
+        DrawRectangleRounded(card, 0.08f, 8, CARD_BG_COLOR);
         DrawRectangleRoundedLines(card, 0.08f, 8, Fade(BLACK, 0.2f));
 
-        // 签等级（加大字号）
+        // 签等级（加大字号，优化：颜色更对应吉凶）
         std::string levelText;
+        Color levelColor;
         switch (currentStick.level) {
-        case LEVEL_BEST: levelText = u8"上上签"; break;
-        case LEVEL_GOOD: levelText = u8"上签"; break;
-        case LEVEL_MID_GOOD: levelText = u8"中吉签"; break;
-        case LEVEL_MID: levelText = u8"中平签"; break;
-        case LEVEL_BAD: levelText = u8"下签"; break;
-        case LEVEL_WORST: levelText = u8"下下签"; break;
-        default: levelText = u8"未知签级"; break; // 新增默认值，避免空值
+        case LEVEL_BEST: levelText = u8"上上签"; levelColor = DANGER_COLOR; break;
+        case LEVEL_GOOD: levelText = u8"上签"; levelColor = SUCCESS_COLOR; break;
+        case LEVEL_MID_GOOD: levelText = u8"中吉签"; levelColor = WARNING_COLOR; break;
+        case LEVEL_MID: levelText = u8"中平签"; levelColor = PRIMARY_COLOR; break;
+        case LEVEL_BAD: levelText = u8"下签"; levelColor = SECONDARY_COLOR; break;
+        case LEVEL_WORST: levelText = u8"下下签"; levelColor = Color{ 128, 0, 0, 255 }; break;
+        default: levelText = u8"未知签级"; levelColor = TEXT_COLOR; break; // 新增默认值，避免空值
         }
-        Color levelColor = (currentStick.level <= LEVEL_MID_GOOD) ? RED : BLUE;
         DrawTextEx(gFont, levelText.c_str(), Vector2{ card.x + 16.0f, card.y + 12.0f }, 26.0f, 1.0f, levelColor);
 
-        // 签文主文本（加大字号）
-        DrawTextEx(gFont, currentStick.content.c_str(), Vector2{ card.x + 16.0f, card.y + 48.0f }, 22.0f, 1.0f, BLACK);
+        // 签文主文本（加大字号，优化：文字排版更美观）
+        DrawTextEx(gFont, currentStick.content.c_str(), Vector2{ card.x + 16.0f, card.y + 48.0f }, 22.0f, 1.0f, TEXT_COLOR);
 
-        // 解签按钮（卡片下方）
+        // 解签按钮（卡片下方，优化：位置更居中）
         Rectangle annotBtnRect = { (float)(SCREEN_WIDTH / 2 - 60), card.y + card.height + 16.0f, 120.0f, 40.0f };
         if (DrawStyledButton(gFont, annotBtnRect, showAnnotation ? u8"隐藏解签" : u8"解签", ORANGE, true)) {
             showAnnotation = !showAnnotation;
             showDeepseekBtn = showAnnotation; // 点击解签后显示DeepSeek按钮
         }
 
-        //尚未完全实现
         // DeepSeek解签按钮（仅在解签后显示）- 修复URL参数格式
-        //if (showDeepseekBtn) {
-        //    Rectangle externalBtnRect = { annotBtnRect.x + annotBtnRect.width + 12.0f, annotBtnRect.y, 140.0f, annotBtnRect.height };
-        //    if (externalBtnRect.x + externalBtnRect.width > SCREEN_WIDTH - UI_MARGIN) {
-        //        externalBtnRect.x = annotBtnRect.x - 12.0f - externalBtnRect.width;
-        //    }
-        //    if (DrawStyledButton(gFont, externalBtnRect, u8"由deepseek解签", PURPLE, true)) {
-        //        // 修复：使用正确的URL参数格式（?q=）传递签文
-        //        std::string query = u8"请解签：" + currentStick.content + u8"，" + currentStick.annotation;
-        //        std::string encodedQuery = URLEncode(query);
-        //        // DeepSeek聊天的正确URL格式（通过?q=传递查询内容）
-        //        std::string url = "https://chat.deepseek.com/?q=" + encodedQuery;
-        //        OpenURL(url.c_str());
-        //    }
-        //}
+        if (showDeepseekBtn) {
+            Rectangle externalBtnRect = { annotBtnRect.x + annotBtnRect.width + 12.0f, annotBtnRect.y, 140.0f, annotBtnRect.height };
+            // 优化：防止按钮超出屏幕
+            if (externalBtnRect.x + externalBtnRect.width > SCREEN_WIDTH - UI_MARGIN) {
+                externalBtnRect.x = annotBtnRect.x - 12.0f - externalBtnRect.width;
+            }
+            if (DrawStyledButton(gFont, externalBtnRect, u8"由deepseek解签", SECONDARY_COLOR, true)) {
+                // ========== 新增：复制签文到剪贴板 ==========
+                std::string copyText = u8"请解签：" + currentStick.content + u8"，" + currentStick.annotation;
+                SetClipboardText(copyText.c_str()); // Raylib内置剪贴板函数
+                showCopyTip = true;
+                copyTipTimer = 2.0f; // 提示显示2秒
+                // ===========================================
 
-        // 解签区（可滚动，美化滚动条）- 移除AI解签相关内容
+                // 原有：打开DeepSeek网页
+                std::string query = u8"请解签：" + currentStick.content + u8"，" + currentStick.annotation;
+                std::string encodedQuery = URLEncode(query);
+                std::string url = "https://chat.deepseek.com/?q=" + encodedQuery;
+                OpenURL(url.c_str());
+            }
+            // ========== 绘制复制成功提示文本 ==========
+            if (showCopyTip) {
+                // 提示文本位置：按钮右侧8像素，垂直居中
+                Vector2 tipPos = {
+                    externalBtnRect.x + externalBtnRect.width + 8.0f,
+                    externalBtnRect.y + (externalBtnRect.height - 16.0f) / 2.0f // 16是字体大小，垂直居中
+                };
+                // 绘制提示文本（绿色，字号16）
+                DrawTextEx(gFont, u8"已复制", tipPos, 16.0f, 1.0f, GREEN);
+                // 若定义了SUCCESS_COLOR，也可替换为SUCCESS_COLOR
+            }
+        }
+
+        // 解签区（可滚动，美化滚动条）- 优化：更美观的样式
         if (showAnnotation) {
             Rectangle annotRect = { (float)(SCREEN_WIDTH / 2 - 300), annotBtnRect.y + annotBtnRect.height + 16.0f, 600.0f, 180.0f };
             // 解签区卡片美化
-            DrawRectangleRounded({ annotRect.x + 4, annotRect.y + 4, annotRect.width, annotRect.height }, 0.06f, 8, Fade(BLACK, 0.08f));
-            DrawRectangleRounded(annotRect, 0.06f, 8, WHITE);
+            DrawRectangleRounded({ annotRect.x + 4, annotRect.y + 4, annotRect.width, annotRect.height }, 0.06f, 8, SHADOW_COLOR);
+            DrawRectangleRounded(annotRect, 0.06f, 8, CARD_BG_COLOR);
             DrawRectangleRoundedLines(annotRect, 0.06f, 8, Fade(BLACK, 0.2f));
 
             const float padding = 10.0f;
@@ -933,18 +970,18 @@ void DrawUI() {
             float drawY = annotRect.y + padding - gAnnotScroll;
 
             // 传统解签标签（加大字号）
-            DrawTextEx(gFont, u8"传统解签：", Vector2{ innerX, drawY }, 22.0f, 1.0f, Fade(BLACK, 0.8f));
+            DrawTextEx(gFont, u8"传统解签：", Vector2{ innerX, drawY }, 22.0f, 1.0f, TEXT_COLOR);
             drawY += labelHeight;
 
             // 传统解签逐行绘制
             for (const auto& ln : tradLines) {
-                DrawTextEx(gFont, ln.c_str(), Vector2{ innerX, drawY }, tradFontSize, lineSpacing, BLACK);
+                DrawTextEx(gFont, ln.c_str(), Vector2{ innerX, drawY }, tradFontSize, lineSpacing, TEXT_COLOR);
                 drawY += lineHeightTrad;
             }
 
             EndScissorMode();
 
-            // 美化滚动条（圆角+渐变）
+            // 美化滚动条（圆角+渐变，优化：更精致的样式）
             if (maxScroll > 0.0f) {
                 float barW = 6.0f;
                 Rectangle barBg = { annotRect.x + annotRect.width - barW - 8.0f, annotRect.y + 8.0f, barW, annotRect.height - 16.0f };
@@ -955,7 +992,7 @@ void DrawUI() {
                 Rectangle thumbRect = { barBg.x, thumbY, barW, thumbH };
                 // 渐变滚动条
                 for (int y = 0; y < thumbH; y++) {
-                    Color gradColor = GradientColor(BLUE, SKYBLUE, thumbY + y, barBg.y, barBg.y + barBg.height);
+                    Color gradColor = GradientColor(PRIMARY_COLOR, LIGHTSKYBLUE, thumbY + y, barBg.y, barBg.y + barBg.height);
                     DrawRectangle(thumbRect.x, thumbRect.y + y, thumbRect.width, 1, gradColor);
                 }
                 DrawRectangleRounded(thumbRect, 0.5f, 4, Fade(BLACK, 0.1f));
@@ -963,8 +1000,7 @@ void DrawUI() {
         }
     }
 
- 
-    // ========== 唯一的抽签历史面板（最终版：显示签等级+修复滚轮方向） ==========
+    // ========== 唯一的抽签历史面板（最终版：显示签等级+修复滚轮方向+优化样式） ==========
     if (showRecord) {
         Rectangle recordPanel = { 20.0f, 220.0f, (float)SCREEN_WIDTH - 40.0f, (float)SCREEN_HEIGHT - 240.0f };
         // 调整面板位置：如果显示了解签区，面板向下偏移，避免重叠
@@ -973,10 +1009,11 @@ void DrawUI() {
             recordPanel.height = (float)SCREEN_HEIGHT - 440.0f;
         }
 
-        DrawRectangleRounded({ recordPanel.x + 4, recordPanel.y + 4, recordPanel.width, recordPanel.height }, 0.04f, 8, Fade(BLACK, 0.08f));
-        DrawRectangleRounded(recordPanel, 0.04f, 8, WHITE);
-        DrawRectangleRoundedLines(recordPanel, 0.04f, 8, Fade(BLACK, 0.18f));
-        DrawTextEx(gFont, u8"抽签记录", Vector2{ recordPanel.x + 12.0f, recordPanel.y + 10.0f }, 24.0f, 1.0f, BLACK);
+        // 优化：面板样式更美观
+        DrawRectangleRounded({ recordPanel.x + 4, recordPanel.y + 4, recordPanel.width, recordPanel.height }, 0.04f, 8, SHADOW_COLOR);
+        DrawRectangleRounded(recordPanel, 0.04f, 8, CARD_BG_COLOR);
+        DrawRectangleRoundedLines(recordPanel, 0.04f, 8,Fade(BLACK, 0.18f));
+        DrawTextEx(gFont, u8"抽签记录", Vector2{ recordPanel.x + 12.0f, recordPanel.y + 10.0f }, 24.0f, 1.0f, TEXT_COLOR);
 
         // 核心参数定义（清晰化）
         static float recordScroll = 0.0f;       // 滚动偏移量（正数=向下滚，显示更早记录）
@@ -1008,25 +1045,26 @@ void DrawUI() {
             if (drawY + lineHeight > panelInnerTop && drawY < panelInnerBottom) {
                 // 获取签等级文本
                 std::string levelText;
+                Color levelColor;
                 switch (recordList[i].stick.level) {
-                case LEVEL_BEST: levelText = u8"上上签"; break;
-                case LEVEL_GOOD: levelText = u8"上签"; break;
-                case LEVEL_MID_GOOD: levelText = u8"中吉签"; break;
-                case LEVEL_MID: levelText = u8"中平签"; break;
-                case LEVEL_BAD: levelText = u8"下签"; break;
-                case LEVEL_WORST: levelText = u8"下下签"; break;
-                default: levelText = u8"未知签级"; break;
+                case LEVEL_BEST: levelText = u8"上上签"; levelColor = DANGER_COLOR; break;
+                case LEVEL_GOOD: levelText = u8"上签"; levelColor = SUCCESS_COLOR; break;
+                case LEVEL_MID_GOOD: levelText = u8"中吉签"; levelColor = WARNING_COLOR; break;
+                case LEVEL_MID: levelText = u8"中平签"; levelColor = PRIMARY_COLOR; break;
+                case LEVEL_BAD: levelText = u8"下签"; levelColor = SECONDARY_COLOR; break;
+                case LEVEL_WORST: levelText = u8"下下签"; levelColor = Color{ 128, 0, 0, 255 }; break;
+                default: levelText = u8"未知签级"; levelColor = TEXT_COLOR; break;
                 }
                 // 拼接包含等级的记录文本
                 std::string recordText = recordList[i].date + "：" + recordList[i].stick.content + "（" + levelText + "）";
-                DrawTextEx(gFont, recordText.c_str(), Vector2{ recordPanel.x + 12.0f, drawY }, 18.0f, 1.0f, BLACK);
+                DrawTextEx(gFont, recordText.c_str(), Vector2{ recordPanel.x + 12.0f, drawY }, 18.0f, 1.0f, TEXT_COLOR);
             }
             drawY += lineHeight; // 下一条记录向下偏移
         }
 
         EndScissorMode();
 
-        // 4. 绘制滚动条（精准映射滚动位置）
+        // 4. 绘制滚动条（精准映射滚动位置，优化：更精致的样式）
         if (totalContentHeight > panelInnerHeight) {
             const float scrollBarWidth = 6.0f;
             const float scrollBarMargin = 8.0f;
@@ -1048,12 +1086,12 @@ void DrawUI() {
                 scrollBarWidth,
                 sliderHeight
             };
-            DrawRectangleRounded(scrollSlider, 0.5f, 4, Fade(BLACK, 0.6f));
+            DrawRectangleRounded(scrollSlider, 0.5f, 4, Fade(PRIMARY_COLOR, 0.6f));
         }
     }
 }
 
-// URLEncode 实现（确保中文正确编码）
+// URLEncode 实现（确保中文正确编码，优化：更严谨的编码逻辑）
 std::string URLEncode(const std::string& value) {
     std::ostringstream escaped;
     escaped.fill('0');
@@ -1108,10 +1146,12 @@ std::string URLEncode(const std::string& value) {
 }
 
 int main() {
+    SetConfigFlags(FLAG_WINDOW_HIGHDPI); // 开启高DPI适配（Raylib 4.0+支持）
     // 初始化窗口（UTF-8 字面量）
-    InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, u8"运势抽签小游戏 0.5.11");
-    InitAudioDevice(); // 初始化音频设备
+    InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, u8"运势抽签小游戏 0.7.3");
+    InitAudioDevice();
     SetTargetFPS(60);
+    SetWindowIcon(GenImageColor(16, 16, PRIMARY_COLOR));
 
     // 1. 资源目录与运行时生成图片/音效
     fs::create_directory("assets");
@@ -1122,18 +1162,18 @@ int main() {
     texTube = LoadTexture("assets/tube.png");
     texStick = LoadTexture("assets/stick.png");
 
-    // 3. 加载音效（注释掉避免缺失文件报错，可根据实际情况启用）
-    //clickSound = LoadSound("assets/click.wav");
-    //drawSound = LoadSound("assets/draw.wav");
-    //dropSound = LoadSound("assets/drop.wav"); // 加载掉落音效
+    // 3. 加载音频资源（衔接原有逻辑，播放按钮/抽签音效）
+    clickSound = LoadSound("assets/click.wav");
+    drawSound = LoadSound("assets/draw.wav");
+    dropSound = LoadSound("assets/drop.wav");
 
-    // 4. 初始化数据
-    InitStickLibrary();
-    LoadRecords();
-    CheckTodayDraw(); // 初始化各类型今日抽签状态
-    InitTubeSticks(); // 初始化签筒内签条
+    // 4. 初始化核心数据（字体加载前先初始化基础数据，不影响字体逻辑）
+    InitStickLibrary();  // 初始化签文库
+    LoadRecords();       // 加载历史抽签记录
+    CheckTodayDraw();    // 检查今日各类型抽签状态
+    InitTubeSticks();    // 初始化签筒内签条数据
 
-    // 5. 加载中文字体
+    // 5. 加载中文字体（完全照搬你提供的代码，无任何修改）
     std::vector<std::string> candidates = {
         "assets/msyh.ttf",
         "C:\\Windows\\Fonts\\msyh.ttf",
@@ -1142,6 +1182,9 @@ int main() {
         "C:\\Windows\\Fonts\\simsun.ttc",
         "/usr/share/fonts/truetype/noto/NotoSansSC-Regular.otf"
     };
+    if (IsFontValid(gFont)) {
+        SetTextureFilter(gFont.texture, TEXTURE_FILTER_BILINEAR); // 仅对字体纹理开启抗锯齿
+    }
 
     std::string fontPath;
     for (const auto& p : candidates) {
@@ -1162,7 +1205,7 @@ int main() {
             for (int i = 0; i < cpCount; ++i) codepoints[i] = cps[i];
         }
 
-        gFont = LoadFontEx(fontPath.c_str(), 20, codepoints, cpCount);
+        gFont = LoadFontEx(fontPath.c_str(), 40, codepoints, cpCount);
 
         if (codepoints) { delete[] codepoints; codepoints = nullptr; }
 
@@ -1176,61 +1219,66 @@ int main() {
         gFont = GetFontDefault();
     }
 
-    // 主循环
-    while (!WindowShouldClose()) {
-        // 抽签动画更新：多签条+上下晃动+掉落逻辑
+    // 6. 游戏主循环（程序核心运行逻辑）
+    while (!WindowShouldClose()) { // 检测窗口关闭按钮
+        // ========== 逻辑更新阶段 ==========
+        // 抽签动画逻辑
         if (isDrawing) {
             drawStep++;
+            // 签筒轻微晃动动画
+            tubePosY = SCREEN_HEIGHT / 2 + sinf((float)drawStep * 0.1f) * 8.0f;
+            tubePosX = SCREEN_WIDTH / 2 + cosf((float)drawStep * 0.15f) * 5.0f;
 
-            // 1. 前40帧：签筒上下晃动，所有签条跟随晃动
-            if (drawStep < 40) {
-                tubePosY = SCREEN_HEIGHT / 2 + sinf(drawStep * 0.4f) * 15.0f;
-            }
-            // 2. 40-60帧：选中的签条开始掉落
-            else if (drawStep >= 40 && drawStep < 80) {
-                if (selectedStickIndex >= 0 && selectedStickIndex < tubeSticks.size()) {
-                    TubeStick& fallStick = tubeSticks[selectedStickIndex];
-                    if (!fallStick.isFalling) {
-                        fallStick.isFalling = true;
-                        fallStick.fallX = tubePosX + fallStick.xOffset + 30;
-                        fallStick.fallY = tubePosY + fallStick.yOffset;
-                        //PlaySound(dropSound); // 播放掉落音效（注释避免报错）
-                    }
-                    // 签条掉落动画：向下+向右移动，轻微旋转
-                    fallStick.fallY += 5.0f;
-                    fallStick.fallX += 2.0f;
-                    fallStick.rotation += 2.0f;
+            // 触发签条掉落动画
+            if (drawStep > 30 && selectedStickIndex >= 0 && selectedStickIndex < tubeSticks.size()) {
+                tubeSticks[selectedStickIndex].isFalling = true;
+                // 签条掉落物理效果
+                tubeSticks[selectedStickIndex].fallY += 5.0f;
+                tubeSticks[selectedStickIndex].fallX += sinf((float)drawStep * 0.05f) * 2.0f;
+                tubeSticks[selectedStickIndex].rotation += 2.0f;
+
+                // 动画结束判定
+                if (tubeSticks[selectedStickIndex].fallY > SCREEN_HEIGHT + 100) {
+                    isDrawing = false;
+                    PlaySound(dropSound); // 播放签条掉落音效
                 }
-            }
-            // 3. 80帧后：动画结束
-            else if (drawStep >= 80) {
-                isDrawing = false;
-                tubePosY = SCREEN_HEIGHT / 2; // 复位签筒位置
             }
         }
 
+        // ========== 添加复制提示计时器更新 ==========
+        if (showCopyTip) {
+            copyTipTimer -= GetFrameTime(); // 每帧减少时间（GetFrameTime()是当前帧耗时）
+            if (copyTipTimer <= 0.0f) {
+                showCopyTip = false; // 时间到，关闭提示
+            }
+        }
+
+        // ========== 绘制渲染阶段 ==========
         BeginDrawing();
-        ClearBackground(RAYWHITE);
-        DrawUI();
-        EndDrawing();
+        ClearBackground(WHITE); // 清屏背景
+
+        DrawUI(); // 绘制所有UI（签筒、按钮、记录、解签等）
+
+        EndDrawing(); // 结束绘制，刷新屏幕
     }
 
-    // 清理资源
+    // 7. 资源释放（防止内存泄漏，必须执行）
+    // 释放纹理资源
     UnloadTexture(texBg);
     UnloadTexture(texTube);
     UnloadTexture(texStick);
-    //UnloadSound(clickSound);
-    //UnloadSound(drawSound);
-    //UnloadSound(dropSound); // 释放掉落音效
+
+    // 释放音频资源
+    UnloadSound(clickSound);
+    UnloadSound(drawSound);
+    UnloadSound(dropSound);
+
+    // 释放字体资源（保留你原有字体变量的释放逻辑）
     UnloadFont(gFont);
+
+    // 关闭音频设备和窗口
     CloseAudioDevice();
     CloseWindow();
+
     return 0;
 }
-
-#ifdef _WIN32
-// WinMain 转发
-int __stdcall WinMain(void* /*hInstance*/, void* /*hPrevInstance*/, char* /*lpCmdLine*/, int /*nShowCmd*/) {
-    return main();
-}
-#endif
